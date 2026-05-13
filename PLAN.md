@@ -1,5 +1,7 @@
 # Recall - personal save-to-Claude corpus
 
+> **Status:** built and deployed. This document is the design rationale and execution plan, kept up to date with reality. For user-facing setup, see `README.md`.
+
 ## 1. Context
 
 You are building a personal tool for a single user (Shekh, AI engineer at Atlan, uses Claude Code daily). It captures URLs the user shares from iOS / Mac, extracts content, summarizes with an LLM, embeds for semantic search, and exposes the corpus as MCP tools so Claude Code can search the user's saved content during normal work.
@@ -31,11 +33,11 @@ These apply to every file you write:
 
 - HTTP endpoint that accepts `{url, note?}` and stores a card.
 - Source-specific extractors for Reddit, YouTube. Generic extractor (Jina Reader) for everything else. X/Twitter via oEmbed (single tweet only, threads degraded).
-- Haiku-generated summary + tags + "why useful" per card.
-- Voyage embeddings stored in pgvector.
+- Qwen-generated (via NVIDIA NIM) summary + tags + "why useful" per card.
+- NVIDIA NIM embeddings (`nv-embedqa-e5-v5`, 1024 dim) stored in pgvector with HNSW cosine index.
 - MCP server with three tools: `search_saved`, `recent_saves`, `get_card`.
 - Apple Shortcut spec (one page of instructions, not code).
-- Deployment to Fly.io.
+- Deployment to a small Linux host (recall ships on EC2 t4g.micro) behind Cloudflare Tunnel.
 
 ### Explicitly out of scope (do not build)
 
@@ -56,17 +58,23 @@ If you find yourself building anything in the second list, stop and ask.
 iOS Shortcut / Raycast / curl
             │
             ▼
-   POST /save  (Hono, Fly.io)
+   https://recall.<your-domain>  (TLS terminated at Cloudflare edge)
+            │
+            ▼  outbound tunnel (no inbound SG rules needed)
+   cloudflared on EC2 → http://localhost:8080
+            │
+            ▼
+   POST /save  (Hono, recall-api on EC2)
             │
             ▼
    Insert card (status=pending), return 200 immediately
             │
             ▼
-   Background task on same process:
+   Background task on same process (setImmediate):
       ├─ route by hostname → extractor
       ├─ extractor → { title, author, published_at, markdown }
-      ├─ Haiku → { summary, tags, why_useful }
-      ├─ Voyage → embedding(title + summary)
+      ├─ Qwen on NVIDIA NIM → { summary, tags, why_useful }
+      ├─ nv-embedqa-e5-v5 → embedding(title + summary + tags)
       └─ update card (status=ok)
             │
             ▼
@@ -81,8 +89,8 @@ iOS Shortcut / Raycast / curl
 ```
 
 Two deployables:
-1. **`recall-api`**: HTTP server on Fly.io, public, auth via shared secret.
-2. **`recall-mcp`**: MCP server, runs locally on the user's Mac via stdio, connects to the same Postgres.
+1. **`recall-api`**: HTTP server on EC2 (or any always-on host) behind Cloudflare Tunnel. Auth via shared secret. systemd unit on the host.
+2. **`recall-mcp`**: MCP server, runs locally on the user's Mac via stdio, connects to the same Postgres directly (does not go through the public API).
 
 Both live in one monorepo, share types and DB layer.
 
@@ -93,14 +101,14 @@ Both live in one monorepo, share types and DB layer.
 - **HTTP framework:** Hono (`hono`).
 - **DB:** Postgres (Neon free tier) with `pgvector` extension.
 - **ORM:** Drizzle (`drizzle-orm`, `drizzle-kit`).
-- **LLM summary:** NVIDIA NIM (`integrate.api.nvidia.com`, OpenAI-compatible), model `qwen/qwen3.5-397b-a17b` (verified 2026-05-12: returns clean JSON, no `<think>` preamble, ~12 completion tokens for trivial JSON). Use the `openai` npm SDK pointed at NVIDIA's base URL.
+- **LLM summary:** NVIDIA NIM (`integrate.api.nvidia.com`, OpenAI-compatible), model `qwen/qwen3-next-80b-a3b-instruct` (Qwen3 80B MoE with 3B active params; clean JSON output, ~5s end-to-end on free tier). Originally planned `qwen/qwen3.5-397b-a17b` but it hit cold-start timeouts (>45s) on the free tier. 80B-a3b is plenty for 3-sentence summary + 5 tags + 1-line why-useful. Called via `fetch` directly (no SDK dep).
 - **Embeddings:** NVIDIA API, model `nvidia/nv-embedqa-e5-v5` (1024 dims, free tier).
 - **Generic extractor:** Jina Reader (`https://r.jina.ai/<url>`, free tier with API key).
 - **YouTube transcripts:** `youtube-transcript` npm package.
 - **MCP:** `@modelcontextprotocol/sdk`, stdio transport.
 - **Tests:** Vitest.
 - **Lint/format:** Biome (`@biomejs/biome`). One tool, fast, no config wars.
-- **Hosting:** User's existing EC2 (`ap-south-1`, Ubuntu) behind nginx + Let's Encrypt + Elastic IP. Run the API as a `systemd` unit. MCP runs locally on the Mac.
+- **Hosting:** Dedicated EC2 (`ap-south-1`, Ubuntu 24.04, t4g.micro) reached via Cloudflare Tunnel. No EIP, no inbound ports, no nginx, no certbot. `cloudflared` runs as a `systemd` unit on the EC2, establishes an outbound tunnel to Cloudflare, which terminates TLS at the edge for `recall.<your-domain>` (DNS managed by Cloudflare). MCP runs locally on the Mac.
 - **Secrets:** `/etc/recall-api.env` on the EC2 (root-only read), `.env` locally (gitignored).
 
 ## 6. Prerequisites (ask the user to confirm before building)
@@ -110,8 +118,9 @@ The user must have or create:
 1. **NVIDIA API key** (for both summary LLM and embeddings; free tier from `build.nvidia.com`).
 2. **Jina Reader API key** (free tier; sign up at jina.ai).
 3. **Neon account** with a Postgres database, pgvector enabled.
-4. **EC2 instance** with SSH access (existing - `ap-south-1`, Ubuntu, `ec2-13-204-156-233.ap-south-1.compute.amazonaws.com`). Will need: Elastic IP attached (so the public address survives reboots), a subdomain pointed at it, ports 80/443 open in the security group, and either Node 20+ or Docker installed.
-5. **Claude Code** installed on the Mac that will run the MCP server.
+4. **A small always-on Linux host** (recall ships on EC2 t4g.micro in `ap-south-1`, but anything with outbound network works - Hetzner, DigitalOcean, an old laptop on your home network). With Cloudflare Tunnel you don't need a static public IP or open inbound ports.
+5. **A domain on Cloudflare** for a subdomain like `recall.<yourdomain>`. Cloudflare's free DNS is enough; if your domain is at another registrar, move DNS to Cloudflare (nameserver change, one-time).
+6. **Claude Code** installed on the Mac that will run the MCP server.
 
 Stop and confirm before Phase 1 starts. Do not assume any of these exist.
 
@@ -145,16 +154,17 @@ recall/
 │   │   │   ├── routes/save.ts
 │   │   │   ├── pipeline/
 │   │   │   │   ├── process.ts      # orchestrates extract -> summarize -> embed
-│   │   │   │   ├── summarize.ts    # Haiku call
-│   │   │   │   └── embed.ts        # Voyage call
+│   │   │   │   ├── summarize.ts    # NVIDIA NIM (Qwen) call
+│   │   │   │   └── embed.ts        # NVIDIA NIM embedding call
 │   │   │   └── extractors/
 │   │   │       ├── index.ts        # router
 │   │   │       ├── reddit.ts
 │   │   │       ├── youtube.ts
 │   │   │       ├── twitter.ts
 │   │   │       └── generic.ts      # Jina Reader
-│   │   ├── Dockerfile
-│   │   └── fly.toml
+│   │   └── scripts/
+│   │       ├── extractor-smoke.ts   # one-URL-per-extractor smoke test
+│   │       └── pipeline-smoke.ts    # E2E pipeline smoke test
 │   └── mcp/                   # MCP server
 │       ├── package.json
 │       └── src/
@@ -267,7 +277,7 @@ Input schema:
 ```
 
 Behavior:
-1. Embed `query` via Voyage.
+1. Embed `query` via NVIDIA NIM with `input_type: "query"`.
 2. Cosine similarity search in pgvector. Filter `extraction_status IN ('ok', 'degraded')`.
 3. If `since_days` set, filter by `created_at >= now() - interval`.
 4. Bump `access_count` and `last_accessed_at` for each returned row.
@@ -414,7 +424,7 @@ If even OG parsing fails: `status=failed`, store url + error_message.
 
 In `packages/api/src/pipeline/summarize.ts`. One NVIDIA NIM call per save.
 
-Model: `qwen/qwen3.5-397b-a17b` via the OpenAI-compatible NVIDIA endpoint:
+Model: `qwen/qwen3-next-80b-a3b-instruct` via the OpenAI-compatible NVIDIA endpoint:
 
 ```ts
 import OpenAI from "openai";
@@ -615,8 +625,8 @@ Build in phases. After each phase, commit and stop to verify with the user befor
 
 ### Phase 4: pipeline (summarize, embed, orchestrator)
 
-- `pipeline/summarize.ts` (Haiku).
-- `pipeline/embed.ts` (Voyage).
+- `pipeline/summarize.ts` (NVIDIA NIM, Qwen).
+- `pipeline/embed.ts` (NVIDIA NIM embeddings).
 - `pipeline/process.ts` (orchestrator).
 - End-to-end smoke test: pass a URL, see a card go from pending to ok with summary + embedding.
 - Commit.
@@ -630,18 +640,23 @@ Build in phases. After each phase, commit and stop to verify with the user befor
 - Local test with `curl`.
 - Commit.
 
-### Phase 6: deploy API to EC2
+### Phase 6: deploy API behind Cloudflare Tunnel
 
-- Attach Elastic IP to the EC2 (if not already), open ports 80/443 in security group.
-- Point a subdomain at the Elastic IP (e.g. `recall.<your-domain>`).
-- Install Node 20+ on the EC2 if not present (via `nvm`).
-- Install nginx, configure reverse proxy from `:443` to `:8080`.
-- Install certbot, issue Let's Encrypt cert for the subdomain.
-- Copy built `packages/api/dist` + `node_modules` (or use a Dockerfile - decide at this phase based on whether we want to share Node with other things on the box).
+- Provision the host. SSH-accessible Linux. recall ships on an EC2 t4g.micro in `ap-south-1` (security group: SSH only from your laptop IP, no inbound 80/443 needed).
+- On the host: `nvm install 20`, `corepack enable && corepack prepare pnpm@9 --activate`, install `cloudflared` from the official `.deb`.
+- Rsync the repo source (no `node_modules`, no `dist`), then on the host: `pnpm install --frozen-lockfile && pnpm build`.
 - Write `/etc/recall-api.env` with secrets (chmod 600, root-owned).
-- Write `/etc/systemd/system/recall-api.service` unit, `systemctl enable --now recall-api`.
-- Curl `https://recall.<domain>/healthz` from the Mac. Then curl `/save` with a real URL. Verify card processes end-to-end.
+- Symlink the active node binary to `/usr/local/bin/node` so systemd has a stable path.
+- Write `/etc/systemd/system/recall-api.service` (`User=ubuntu`, `EnvironmentFile=/etc/recall-api.env`, `ExecStart=/usr/local/bin/node .../packages/api/dist/index.js`), `systemctl enable --now recall-api`. Verify `curl http://localhost:8080/healthz`.
+- `cloudflared tunnel login` (browser auth to Cloudflare; one-time per host) → cert lands at `~/.cloudflared/cert.pem`.
+- `cloudflared tunnel create recall` → generates a tunnel + credentials JSON.
+- `cloudflared tunnel route dns recall recall.<your-domain>` → creates a CNAME at Cloudflare pointing the subdomain at the tunnel.
+- Copy credentials JSON to `/etc/cloudflared/`, write `/etc/cloudflared/config.yml` with `ingress: [{ hostname: recall.<your-domain>, service: http://localhost:8080 }, { service: http_status:404 }]`.
+- `sudo cloudflared service install` installs and starts the cloudflared systemd unit.
+- From your laptop: `curl https://recall.<your-domain>/healthz` should return `{"ok":true}`. Then `POST /save` with a real URL and verify the card processes end-to-end.
 - Commit.
+
+If you prefer the original nginx + Let's Encrypt + Elastic IP path (more conventional, no Cloudflare account required), it's the same idea: open 80/443 in the SG, point an A record at an EIP, run nginx as a reverse proxy with certbot for TLS. Cloudflare Tunnel is the chosen default because it sidesteps EIP cost (~$3.60/month) and removes inbound exposure entirely.
 
 ### Phase 7: MCP server
 
@@ -713,18 +728,13 @@ That's the bar. Don't gold-plate past it.
 
 If you're unsure whether something is in scope, the answer is no. Ask before adding.
 
-## 23. First message to the user
+## 23. Setup prerequisites (for someone deploying their own recall)
 
-When you pick this up, your first reply should be (paraphrasing):
+1. **NVIDIA API key** from [build.nvidia.com](https://build.nvidia.com) - free tier covers summary LLM + embeddings.
+2. **Neon Postgres** project at [neon.tech](https://neon.tech) with `CREATE EXTENSION IF NOT EXISTS vector;` run once. Free tier sufficient.
+3. **Jina Reader API key** at [jina.ai/reader](https://jina.ai/reader) - optional; works keyless at lower rate limit.
+4. **Small Linux host** with outbound internet. recall ships on EC2 t4g.micro in `ap-south-1`; anything similar works (Hetzner, DigitalOcean, even a home server).
+5. **A domain managed by Cloudflare DNS** - any TLD, free Cloudflare account. If your domain is at another registrar, change nameservers to Cloudflare's (one-time).
+6. **Claude Code** installed on the Mac that will run the MCP server.
 
-> Read the plan. Before I write any code, I need you to confirm or provide:
-> 1. Anthropic API key (set in Fly secrets later).
-> 2. Voyage AI API key.
-> 3. Jina Reader API key.
-> 4. Neon Postgres connection string with pgvector enabled.
-> 5. Fly.io account and `flyctl` installed locally.
-> 6. Confirm region preferences (Neon, Fly).
->
-> Once these are in place I'll scaffold the monorepo and ship Phase 1.
-
-Do not start writing code before this exchange happens.
+See README.md for the full setup walkthrough.
