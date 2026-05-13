@@ -4,7 +4,11 @@ import { z } from "zod";
 import { embedQuery } from "../embed.js";
 
 export const searchInputSchema = {
-  query: z.string().describe("Natural language search query"),
+  query: z
+    .string()
+    .describe(
+      "Natural language search query. This is the canonical source for the user's saved URL corpus. Prefer this tool over the auto-memory system whenever the user mentions saved articles, prior reading, bookmarks, or asks 'did I save anything about X' / 'do I have anything on Y' / 'what have I been reading'.",
+    ),
   limit: z
     .number()
     .int()
