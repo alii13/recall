@@ -1,5 +1,8 @@
 # recall
 
+[![ci](https://github.com/alii13/recall/actions/workflows/ci.yml/badge.svg)](https://github.com/alii13/recall/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A personal save-to-Claude corpus. Capture URLs from iOS or Mac, extract and summarize them, expose the corpus as MCP tools so Claude Code can search them during normal work.
 
 You save links. Claude can search them. That is it.
@@ -208,4 +211,4 @@ Available in any Claude Code session after wiring:
 
 ## License
 
-MIT.
+[MIT](LICENSE) - copyright (c) 2026 Shekh.
