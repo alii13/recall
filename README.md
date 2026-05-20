@@ -179,13 +179,17 @@ If natural-language queries route to your built-in auto-memory instead of the re
 
 > When I mention saved content, prior reading, bookmarks, or ask "did I save anything about X" / "do I have anything on Y" / "what have I been reading", call the `recall` MCP server's `search_saved` first. Only fall back to auto-memory if recall returns nothing relevant.
 
-### iOS Shortcut
+### Capture Shortcuts
 
-#### Quick install (recommended)
+Two Shortcuts cover the everyday capture surfaces. Install either or both depending on how you save links.
 
-Tap this iCloud link on iPhone or Mac to install the template Shortcut:
+#### 1. Recall - iphone (Share Sheet, iOS + iPad + Mac Safari)
 
-[**Save to recall (template)**](https://www.icloud.com/shortcuts/5d6930d1d04d407f954036ebb7d37e1f)
+Use when an app gives you a share button (Safari, iOS Chrome, X, Reddit, LinkedIn, YouTube, etc.).
+
+**Quick install:** tap this iCloud link on iPhone, iPad, or Mac:
+
+[**Recall - iphone (template)**](https://www.icloud.com/shortcuts/5d6930d1d04d407f954036ebb7d37e1f)
 
 After import:
 
@@ -196,11 +200,11 @@ After import:
 
 Test by sharing a tweet or article from Safari. The Shortcut returns in under a second; processing happens async on the server.
 
-**If sharing from a specific app doesn't show Save to recall**, that app has filtered out Shortcuts from its share sheet by default. Inside the app's share sheet, scroll to the bottom and tap `Edit Actions...`, then tap the `+` next to Save to recall to pin it. One-time per app.
+**If sharing from a specific app doesn't show Recall - iphone**, that app has filtered out Shortcuts from its share sheet by default. Inside the app's share sheet, scroll to the bottom and tap `Edit Actions...`, then tap the `+` next to Recall - iphone to pin it. One-time per app.
 
-#### Manual build (if you want to author from scratch)
+##### Manual build (if you'd rather author from scratch)
 
-1. Open Shortcuts on iOS or macOS, create a new Shortcut named `Save to recall`.
+1. Open Shortcuts on iOS or macOS, create a new Shortcut named `Recall - iphone`.
 2. **Receive** action: accept input from Share Sheet with types URLs, Safari webpages, Articles, Rich text.
 3. **Get Item from List** action: input = Shortcut Input, get = First Item. (Some apps send multiple URL items; this picks one cleanly.)
 4. **Get Contents of URL** action:
@@ -209,6 +213,29 @@ Test by sharing a tweet or article from Safari. The Shortcut returns in under a 
    - Headers: `X-Save-Token: <your-SAVE_TOKEN>` and `Content-Type: application/json`
    - Request Body: **JSON**, with one field `url` whose value is the **Item from List** magic variable (output of step 3).
 5. In the Shortcut **(i)** details, enable **Show in Share Sheet** and select the accepted types from step 2.
+
+#### 2. Recall - mac (Mac menu bar)
+
+Use on Mac when an app doesn't surface the macOS share sheet cleanly (Chrome, VS Code, Slack, Discord, Notion, ...). Copy the URL, click the Shortcut from the menu bar.
+
+**Quick install:** tap this iCloud link on Mac:
+
+[**Recall - mac (template)**](https://www.icloud.com/shortcuts/2118ee87d668422a803b57a82a2c0e9b)
+
+After import:
+
+1. Open the Shortcut in Shortcuts.app
+2. Replace `YOUR-HOST` and `YOUR-SAVE-TOKEN` in the **Get Contents of URL** action, same as the Share Sheet one
+3. In the **(i)** details, enable **Pin in Menu Bar** so it sits in your top-right system menu
+4. (Optional) **Add Keyboard Shortcut** like `⌘⌥S` for one-keypress capture from anywhere
+
+**Daily use:** in any Mac app with a URL, `⌘L` (focus address bar / select URL) → `⌘C` → click the menu bar Shortcuts icon → **Recall - mac**. Card is in your corpus before you switch back.
+
+##### Manual build
+
+1. Create new Shortcut named `Recall - mac`.
+2. **Get Clipboard** action (no parameters).
+3. **Get Contents of URL** action, configured exactly like the Share Sheet version, except the `url` field's JSON body value is the **Clipboard** magic variable from step 2.
 
 ## MCP tools
 
