@@ -3,7 +3,13 @@
 [![ci](https://github.com/alii13/recall/actions/workflows/ci.yml/badge.svg)](https://github.com/alii13/recall/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A personal save-to-Claude corpus. Capture URLs from iOS or Mac, extract and summarize them, expose the corpus as MCP tools so Claude Code can search them during normal work.
+I share links to myself all day. WhatsApp to self, Notes app, bookmarks I never reopen, browser tabs I close in ten minutes. Two months later I'm building something, vaguely remember reading the perfect thing for it, and can never find it again. This is the tool I built to fix that.
+
+You save a URL. Recall fetches the page, summarizes it, embeds it, files it away. From then on, when you're working with Claude Code on something and ask *"did I save anything about retrieval evals?"* or *"what was that post about long-running agents?"* - Claude searches your corpus and surfaces what's actually relevant. The right card, not 30 bookmarks to skim.
+
+The shift that makes this different from Pocket, Readwise, or an Obsidian vault: **your saves don't go to a human inbox you'll never open again**. They go straight into Claude's context as a tool it can pull from while you're working on something else. Your assistant becomes specifically yours over time - it knows what you've been reading, what you've been investigating, what you cared about three months ago when you skimmed an article and forgot.
+
+If you already use Claude Code every day, this slots into the workflow you have. Capture from iPhone Share Sheet, Mac clipboard, or curl. The pipeline does extraction + summarization in the background; the iOS Shortcut returns in under a second so the share sheet doesn't block. Search happens through MCP, automatically, the moment Claude needs context.
 
 You save links. Claude can search them. That is it.
 
@@ -30,24 +36,26 @@ flowchart TB
         rcst["Raycast / curl"]
     end
 
-    subgraph host["2 - API host (any always-on host with HTTPS)"]
-        ng["nginx :443<br/>TLS"]
+    cf["2 - Cloudflare edge<br/>TLS terminated here<br/>routes via tunnel"]
+
+    subgraph host["3 - API host (any small Linux box)"]
+        cfd["cloudflared<br/>outbound tunnel<br/>(no inbound ports)"]
         api["Hono /save<br/>auth, dedupe, insert pending<br/>respond < 100 ms"]
-        subgraph pipe["3 - async pipeline"]
+        subgraph pipe["4 - async pipeline"]
             extract["extract<br/>Reddit / YouTube / Twitter<br/>Jina for the long tail"]
             sumr["summarize<br/>Qwen on NVIDIA NIM"]
             embed["embed<br/>nv-embedqa-e5-v5"]
         end
     end
 
-    db[("4 - Postgres + pgvector<br/>cards · hnsw · btree")]
+    db[("5 - Postgres + pgvector<br/>cards · hnsw · btree")]
 
-    subgraph mac["5 - your Mac"]
+    subgraph mac["6 - your Mac"]
         mcp["MCP server (stdio)<br/>search_saved · recent_saves · get_card"]
         cc["Claude Code"]
     end
 
-    user --> capture --> ng --> api
+    user --> capture --> cf --> cfd --> api
     api -.->|pending row| db
     api ==>|card_id| pipe
     extract --> sumr --> embed -.->|status = ok| db
