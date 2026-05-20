@@ -181,18 +181,34 @@ If natural-language queries route to your built-in auto-memory instead of the re
 
 ### iOS Shortcut
 
-1. Open Shortcuts on iOS or macOS.
-2. Create a new Shortcut, name it `Save to recall`.
-3. Add action: **Get Contents of URL**.
-4. Set URL: `https://<your-host>/save`.
-5. Method: `POST`.
-6. Headers:
-   - `X-Save-Token`: your `SAVE_TOKEN` value
-   - `Content-Type`: `application/json`
-7. Request Body (JSON): `{ "url": "<Shortcut Input>" }` (use the magic variable for input).
-8. In Shortcut settings, enable **Use as Share Sheet** and accept **URLs** and **Safari web pages** as input.
+#### Quick install (recommended)
 
-Test by sharing a tweet or article from Safari. The Shortcut should complete in well under a second; processing happens async on the server.
+Tap this iCloud link on iPhone or Mac to install the template Shortcut:
+
+[**Save to recall (template)**](https://www.icloud.com/shortcuts/5d6930d1d04d407f954036ebb7d37e1f)
+
+After import:
+
+1. Open the Shortcut in the Shortcuts app
+2. In the **Get Contents of URL** action, replace `https://YOUR-HOST/save` with `https://<your-recall-host>/save`
+3. In the same action's **Headers**, replace `YOUR-SAVE-TOKEN` with your `SAVE_TOKEN` value from `.env`
+4. In the **(i)** details, enable **Show in Share Sheet** and tick at least **URLs**, **Safari webpages**, **Articles**, and **Rich text** for broad app compatibility (LinkedIn shares as `Articles`, Mail shares as `Rich text`, most browsers as `URLs`)
+
+Test by sharing a tweet or article from Safari. The Shortcut returns in under a second; processing happens async on the server.
+
+**If sharing from a specific app doesn't show Save to recall**, that app has filtered out Shortcuts from its share sheet by default. Inside the app's share sheet, scroll to the bottom and tap `Edit Actions...`, then tap the `+` next to Save to recall to pin it. One-time per app.
+
+#### Manual build (if you want to author from scratch)
+
+1. Open Shortcuts on iOS or macOS, create a new Shortcut named `Save to recall`.
+2. **Receive** action: accept input from Share Sheet with types URLs, Safari webpages, Articles, Rich text.
+3. **Get Item from List** action: input = Shortcut Input, get = First Item. (Some apps send multiple URL items; this picks one cleanly.)
+4. **Get Contents of URL** action:
+   - URL: `https://<your-recall-host>/save`
+   - Method: `POST`
+   - Headers: `X-Save-Token: <your-SAVE_TOKEN>` and `Content-Type: application/json`
+   - Request Body: **JSON**, with one field `url` whose value is the **Item from List** magic variable (output of step 3).
+5. In the Shortcut **(i)** details, enable **Show in Share Sheet** and select the accepted types from step 2.
 
 ## MCP tools
 
