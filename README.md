@@ -1,5 +1,7 @@
 # recall
 
+![recall banner](assets/banner.png)
+
 [![ci](https://github.com/alii13/recall/actions/workflows/ci.yml/badge.svg)](https://github.com/alii13/recall/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
