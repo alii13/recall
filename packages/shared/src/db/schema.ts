@@ -58,11 +58,13 @@ export const learnings = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     lastSurfacedAt: timestamp("last_surfaced_at", { withTimezone: true }),
     surfaceCount: integer("surface_count").notNull().default(0),
+    status: text("status").notNull().default("pending"),
   },
   (t) => [
     index("learnings_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
     index("learnings_project_idx").on(t.project),
     index("learnings_created_at_idx").on(t.createdAt.desc()),
+    index("learnings_status_idx").on(t.status),
   ],
 );
 

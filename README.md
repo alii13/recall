@@ -184,7 +184,7 @@ If natural-language queries route to your built-in auto-memory instead of the re
 
 ### Capture session learnings
 
-The save pipeline accumulates what you *read*. This does the same for what you *decide*. `@recall/capture` is a Claude Code `SessionEnd` hook: when a session ends it reads the transcript, asks the same NIM Qwen model to pull out durable decisions, corrections, and gotchas, embeds each, and writes them to the `learnings` table. Surfacing them back into future sessions (an MCP tool or a `SessionStart` hook over `learnings`) is the natural next step - capture comes first because the data has to exist before it can be recalled.
+The save pipeline accumulates what you *read*. This does the same for what you *decide*. `@recall/capture` is a Claude Code `SessionEnd` hook: when a session ends it reads the transcript, asks the same NIM Qwen model to pull out durable decisions, corrections, and gotchas, embeds each, deduplicates against both the current batch and what is already stored, and writes the survivors to the `learnings` table as `pending`. Nothing reads a captured learning until you review it, so a weak extraction can't leak anywhere. Surfacing kept learnings back into future sessions (an MCP tool or a `SessionStart` hook over `learnings`) is the natural next step - capture comes first because the data has to exist before it can be recalled.
 
 It is deliberately walled off from your saved URLs. The three MCP tools only ever read `cards`, so a captured learning can never surface as if it were something you saved. Only the human-readable dialogue is sent to NIM - tool output, where leaked secrets tend to live, is dropped before extraction.
 
@@ -218,7 +218,15 @@ tail -f ~/.recall/capture.log
 # {"ts":"...","status":"ok","sessionId":"...","project":"recall","inserted":7,"durationMs":61079}
 ```
 
-A `launch` line with no matching `ok` / `empty` / `error` for the same `sessionId` means the worker died silently. Grep `"status":"error"` to see failures and their messages.
+A `launch` line with no matching `ok` / `empty` / `error` for the same `sessionId` means the worker died silently. Grep `"status":"error"` to see failures and their messages (e.g. `nim_chat_failed` when the model times out).
+
+Captured learnings land as `pending` and stay out of any recall path until you review them - the same keep / skip curation as a journal review:
+
+```bash
+node packages/capture/dist/review.js list            # pending learnings (optionally: list <project>)
+node packages/capture/dist/review.js keep <id> <id>  # promote to kept
+node packages/capture/dist/review.js skip <id> <id>  # discard
+```
 
 ### Capture Shortcuts
 

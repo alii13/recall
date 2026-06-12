@@ -10,23 +10,28 @@ const EMBED_DIMENSIONS = 1024;
 // summaries, asking for structured learnings. Returns the raw model text;
 // parsing/validation lives in extract.ts.
 export async function extractLearnings(apiKey: string, userPrompt: string): Promise<string> {
-  const res = await fetch(CHAT_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: CHAT_MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0,
-      max_tokens: 1200,
-    }),
-    signal: AbortSignal.timeout(90_000),
-  });
+  let res: Response;
+  try {
+    res = await fetch(CHAT_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: CHAT_MODEL,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0,
+        max_tokens: 1200,
+      }),
+      signal: AbortSignal.timeout(120_000),
+    });
+  } catch (e) {
+    throw new Error(`nim_chat_failed: ${(e as Error).message}`);
+  }
   if (!res.ok) {
     throw new Error(`nim_chat_http_${res.status}: ${await res.text()}`);
   }
@@ -38,20 +43,25 @@ export async function extractLearnings(apiKey: string, userPrompt: string): Prom
 // "query"). The recall MCP search tool embeds queries; this embeds passages so
 // the two land in the same space.
 export async function embedPassage(apiKey: string, text: string): Promise<number[]> {
-  const res = await fetch(EMBED_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: EMBED_MODEL,
-      input: text,
-      input_type: "passage",
-      encoding_format: "float",
-    }),
-    signal: AbortSignal.timeout(20_000),
-  });
+  let res: Response;
+  try {
+    res = await fetch(EMBED_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: EMBED_MODEL,
+        input: text,
+        input_type: "passage",
+        encoding_format: "float",
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e) {
+    throw new Error(`embed_failed: ${(e as Error).message}`);
+  }
   if (!res.ok) {
     throw new Error(`embed_http_${res.status}: ${await res.text()}`);
   }

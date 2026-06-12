@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { type NewLearning, createDb, learnings } from "@recall/shared";
-import { buildExtractionPrompt, parseExtraction } from "./extract.js";
+import { isNotNull, sql } from "drizzle-orm";
+import { dedupeWithinBatch } from "./dedup.js";
+import { type LearningInput, buildExtractionPrompt, parseExtraction } from "./extract.js";
 import { logEvent } from "./log.js";
 import { embedPassage, extractLearnings } from "./nim.js";
 import { parseTranscript, projectFromCwd } from "./transcript.js";
@@ -8,6 +10,9 @@ import { parseTranscript, projectFromCwd } from "./transcript.js";
 const ENV_FILE = process.env.RECALL_ENV_FILE ?? "/Users/shekh/recall/.env";
 const MIN_TURNS = 4;
 const MIN_CHARS = 1500;
+// Cosine similarity at or above this counts as a duplicate - both within one
+// batch and against learnings already stored.
+const DEDUP_THRESHOLD = Number(process.env.RECALL_DEDUP_THRESHOLD ?? 0.9);
 
 async function main(): Promise<void> {
   const started = Date.now();
@@ -55,27 +60,58 @@ async function main(): Promise<void> {
       return;
     }
 
-    const rows: NewLearning[] = [];
-    for (const c of candidates) {
-      const embedding = await embedPassage(apiKey, `${c.title}\n\n${c.body}`);
-      rows.push({
-        kind: c.kind,
-        project,
-        title: c.title,
-        body: c.body,
-        why: c.why,
-        howToApply: c.howToApply,
-        tags: c.tags,
-        embedding,
-        sessionId,
-      });
+    const embedded: { candidate: LearningInput; embedding: number[] }[] = [];
+    for (const candidate of candidates) {
+      const embedding = await embedPassage(apiKey, `${candidate.title}\n\n${candidate.body}`);
+      embedded.push({ candidate, embedding });
     }
+
+    // Drop near-duplicates within this batch, then anything close to a row that
+    // already exists. Keeps the same learning from piling up across sessions.
+    const unique = dedupeWithinBatch(embedded, DEDUP_THRESHOLD);
+    const fresh: typeof unique = [];
+    for (const item of unique) {
+      const vec = `[${item.embedding.join(",")}]`;
+      const distance = sql<number>`${learnings.embedding} <=> ${vec}::vector`;
+      const [near] = await db
+        .select({ distance })
+        .from(learnings)
+        .where(isNotNull(learnings.embedding))
+        .orderBy(distance)
+        .limit(1);
+      const similarity = near ? 1 - Number(near.distance) : 0;
+      if (similarity < DEDUP_THRESHOLD) fresh.push(item);
+    }
+
+    if (fresh.length === 0) {
+      logEvent({
+        status: "empty",
+        sessionId,
+        project,
+        reason: "all_duplicates",
+        candidates: candidates.length,
+      });
+      return;
+    }
+
+    const rows: NewLearning[] = fresh.map(({ candidate, embedding }) => ({
+      kind: candidate.kind,
+      project,
+      title: candidate.title,
+      body: candidate.body,
+      why: candidate.why,
+      howToApply: candidate.howToApply,
+      tags: candidate.tags,
+      embedding,
+      sessionId,
+    }));
     await db.insert(learnings).values(rows);
     logEvent({
       status: "ok",
       sessionId,
       project,
       inserted: rows.length,
+      deduped: candidates.length - rows.length,
       durationMs: Date.now() - started,
     });
   } catch (e) {

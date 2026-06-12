@@ -15,6 +15,13 @@
       "when": 1781249758333,
       "tag": "0001_material_tombstone",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781253764583,
+      "tag": "0002_married_silver_samurai",
+      "breakpoints": true
     }
   ]
 }
