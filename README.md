@@ -234,6 +234,28 @@ pnpm --filter @recall/mcp build && pnpm --filter @recall/mcp eval
 # { "n": 6, "precision@1": 1, "recall@3": 1, "misses": [] }
 ```
 
+### Scheduled cleanup
+
+Nothing prunes the store by hand, so a deterministic sweep removes near-duplicates and stale rows. It deletes at most `RECALL_SWEEP_MAX_DELETE` (default 25) per run, never touches importance-5 rows, and logs every removal (id, title, reason) to `~/.recall/capture.log`:
+
+```bash
+node packages/capture/dist/sweep.js
+# duplicates: cosine >= 0.93, keeps the higher-importance row
+# stale:      never surfaced + older than 120 days + importance <= 4
+```
+
+To run it weekly on macOS, install a launch agent at `~/Library/LaunchAgents/com.recall.learnings-sweep.plist` that runs the built `sweep.js`, then `launchctl load -w` it:
+
+```xml
+<key>ProgramArguments</key>
+<array>
+  <string>/opt/homebrew/bin/node</string>
+  <string>/absolute/path/to/recall/packages/capture/dist/sweep.js</string>
+</array>
+<key>StartCalendarInterval</key>
+<dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>9</integer></dict>
+```
+
 ### Capture Shortcuts
 
 Two Shortcuts cover the everyday capture surfaces. Install either or both depending on how you save links.
