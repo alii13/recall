@@ -184,7 +184,7 @@ If natural-language queries route to your built-in auto-memory instead of the re
 
 ### Capture session learnings
 
-The save pipeline accumulates what you *read*. This does the same for what you *decide*. `@recall/capture` is a Claude Code `SessionEnd` hook: when a session ends it reads the transcript, asks the same NIM Qwen model to pull out durable decisions, corrections, and gotchas, embeds each, deduplicates against both the current batch and what is already stored, and writes the survivors to the `learnings` table as `pending`. Nothing reads a captured learning until you review it, so a weak extraction can't leak anywhere. Once kept, learnings surface back into any session through the `search_learnings` MCP tool (see [MCP tools](#mcp-tools)) - that closes the loop: capture at session end, review, recall on demand.
+The save pipeline accumulates what you *read*. This does the same for what you *decide*. `@recall/capture` is a Claude Code `SessionEnd` hook: when a session ends it reads the transcript, asks the same NIM Qwen model to pull out durable decisions, corrections, and gotchas and score each for importance (1-5), embeds them, deduplicates against both the current batch and what is already stored, and **auto-keeps the ones rated `≥ 4`** (the `RECALL_KEEP_THRESHOLD`). There is no human review step - because nothing human reads this store, the importance score plus dedup are the quality gate. Kept learnings surface back into any session through the `search_learnings` MCP tool (see [MCP tools](#mcp-tools)), closing the loop: capture at session end → auto-keep the high-signal ones → recall on demand.
 
 It is deliberately walled off from your saved URLs. The three MCP tools only ever read `cards`, so a captured learning can never surface as if it were something you saved. Only the human-readable dialogue is sent to NIM - tool output, where leaked secrets tend to live, is dropped before extraction.
 
@@ -215,17 +215,23 @@ Every run appends one JSON line to `~/.recall/capture.log` (override with `RECAL
 ```bash
 tail -f ~/.recall/capture.log
 # {"ts":"...","status":"launch","sessionId":"...","pid":12345}
-# {"ts":"...","status":"ok","sessionId":"...","project":"recall","inserted":7,"durationMs":61079}
+# {"ts":"...","status":"ok","sessionId":"...","project":"recall","inserted":3,"droppedLowImportance":4,"deduped":1,"durationMs":61079}
 ```
 
 A `launch` line with no matching `ok` / `empty` / `error` for the same `sessionId` means the worker died silently. Grep `"status":"error"` to see failures and their messages (e.g. `nim_chat_failed` when the model times out).
 
-Captured learnings land as `pending` and stay out of any recall path until you review them - the same keep / skip curation as a journal review:
+High-importance learnings are kept automatically, so the loop runs without you in it. The review CLI is still there for optional cleanup - inspecting what was kept and pruning anything that slipped through:
 
 ```bash
-node packages/capture/dist/review.js list            # pending learnings (optionally: list <project>)
-node packages/capture/dist/review.js keep <id> <id>  # promote to kept
-node packages/capture/dist/review.js skip <id> <id>  # discard
+node packages/capture/dist/review.js list            # all learnings + status/importance (optionally: list <project>)
+node packages/capture/dist/review.js skip <id> <id>  # delete one that slipped through
+```
+
+Because nothing human reads the store, a retrieval eval is the only signal that recall still works - it seeds known fixtures, runs them through `search_learnings`, and reports precision:
+
+```bash
+pnpm --filter @recall/mcp build && pnpm --filter @recall/mcp eval
+# { "n": 6, "precision@1": 1, "recall@3": 1, "misses": [] }
 ```
 
 ### Capture Shortcuts

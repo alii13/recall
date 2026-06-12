@@ -7,6 +7,7 @@ export const learningSchema = z.object({
   body: z.string().min(1),
   why: z.string().optional(),
   howToApply: z.string().optional(),
+  importance: z.number().int().min(1).max(5).catch(3),
   tags: z.array(z.string()).default([]),
 });
 
@@ -29,9 +30,12 @@ Return STRICT JSON: an array of objects with this shape, nothing else, no prose,
     "body": "the learning, self-contained, makes sense without the transcript",
     "why": "the reasoning (optional, include when it adds context)",
     "howToApply": "concrete guidance for next time (optional)",
+    "importance": "integer 1-5: how durably reusable across FUTURE sessions. 5 = a load-bearing decision or correction you will certainly want again; 3 = useful but situational; 1 = trivial or one-off.",
     "tags": ["3-6 lowercase kebab-case tags"]
   }
-]`;
+]
+
+Score importance honestly and sparingly - most learnings are 3 or below; reserve 4 and 5 for things that genuinely change how future work is done.`;
 
 // Cap the dialogue we send to NIM. Keeps the most recent turns, which carry
 // the decisions and corrections, within model context and cost limits.
