@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createDb } from "@recall/shared";
 import { getInputSchema, makeGetTool } from "./tools/get.js";
+import { makeSearchLearningsTool, searchLearningsInputSchema } from "./tools/learnings.js";
 import { makeRecentTool, recentInputSchema } from "./tools/recent.js";
 import { makeSearchTool, searchInputSchema } from "./tools/search.js";
 
@@ -48,6 +49,16 @@ server.registerTool(
     inputSchema: getInputSchema,
   },
   makeGetTool(db),
+);
+
+server.registerTool(
+  "search_learnings",
+  {
+    description:
+      "Search the user's accumulated learnings from past Claude Code sessions - decisions they've made, corrections they've given, and gotchas discovered - captured at session end and reviewed by the user. Returns ranked learnings with kind, title, body, why, how-to-apply, project, tags, and a relevance score. Call this when starting work on a project to recall prior decisions, when the user references something they 'decided earlier' or 'told you before', or to avoid repeating a past mistake. Distinct from search_saved: that searches saved articles and URLs; this searches the user's own working decisions and corrections.",
+    inputSchema: searchLearningsInputSchema,
+  },
+  makeSearchLearningsTool({ db, nvidiaApiKey }),
 );
 
 const transport = new StdioServerTransport();

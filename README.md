@@ -68,7 +68,7 @@ flowchart TB
 
 - `@recall/shared` - Drizzle schema, URL utilities (normalize / hash / route), env loader, DB client
 - `@recall/api` - Hono HTTP server with `/save`, custom extractors for Reddit / YouTube / Twitter, Jina-based generic extractor with OG fallback, the summarize-embed-orchestrate pipeline
-- `@recall/mcp` - MCP stdio server with three tools: `search_saved`, `recent_saves`, `get_card`
+- `@recall/mcp` - MCP stdio server: `search_saved`, `recent_saves`, `get_card`, and `search_learnings` (recall over kept session learnings)
 - `@recall/capture` - a Claude Code `SessionEnd` hook that captures durable learnings from a session transcript into a separate `learnings` table (see [Capture session learnings](#capture-session-learnings))
 
 ## Setup
@@ -184,7 +184,7 @@ If natural-language queries route to your built-in auto-memory instead of the re
 
 ### Capture session learnings
 
-The save pipeline accumulates what you *read*. This does the same for what you *decide*. `@recall/capture` is a Claude Code `SessionEnd` hook: when a session ends it reads the transcript, asks the same NIM Qwen model to pull out durable decisions, corrections, and gotchas, embeds each, deduplicates against both the current batch and what is already stored, and writes the survivors to the `learnings` table as `pending`. Nothing reads a captured learning until you review it, so a weak extraction can't leak anywhere. Surfacing kept learnings back into future sessions (an MCP tool or a `SessionStart` hook over `learnings`) is the natural next step - capture comes first because the data has to exist before it can be recalled.
+The save pipeline accumulates what you *read*. This does the same for what you *decide*. `@recall/capture` is a Claude Code `SessionEnd` hook: when a session ends it reads the transcript, asks the same NIM Qwen model to pull out durable decisions, corrections, and gotchas, embeds each, deduplicates against both the current batch and what is already stored, and writes the survivors to the `learnings` table as `pending`. Nothing reads a captured learning until you review it, so a weak extraction can't leak anywhere. Once kept, learnings surface back into any session through the `search_learnings` MCP tool (see [MCP tools](#mcp-tools)) - that closes the loop: capture at session end, review, recall on demand.
 
 It is deliberately walled off from your saved URLs. The three MCP tools only ever read `cards`, so a captured learning can never surface as if it were something you saved. Only the human-readable dialogue is sent to NIM - tool output, where leaked secrets tend to live, is dropped before extraction.
 
@@ -293,6 +293,7 @@ Available in any Claude Code session after wiring:
 - **`search_saved(query, limit?, since_days?)`** - semantic search over the embedding column. Returns ranked cards with title, URL, summary, why_useful, tags, score (cosine similarity).
 - **`recent_saves(days?, source_type?, limit?)`** - chronological listing. Defaults to last 7 days, top 10. Filter by source_type (`reddit`, `youtube`, `twitter`, `github`, `hackernews`, `article`).
 - **`get_card(id)`** - fetch one card with its full markdown body. Use after `search_saved` when you need the actual article text, not just the summary.
+- **`search_learnings(query, project?, kind?, limit?)`** - semantic search over your reviewed (`kept`) session learnings. Returns ranked decisions, corrections, and gotchas with title, body, why, how-to-apply, project, tags, and score. Pending (unreviewed) learnings are never returned. See [Capture session learnings](#capture-session-learnings).
 
 ## Limitations
 
