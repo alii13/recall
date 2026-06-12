@@ -97,6 +97,17 @@ describe("parseExtraction", () => {
     expect(out[0]?.tags).toEqual(["orm"]);
   });
 
+  it("preserves importance and falls back to 3 when missing or out of range", () => {
+    const out = parseExtraction(
+      JSON.stringify([
+        { kind: "decision", title: "scored", body: "b", importance: 5 },
+        { kind: "gotcha", title: "unscored", body: "b" },
+        { kind: "correction", title: "out-of-range", body: "b", importance: 99 },
+      ]),
+    );
+    expect(out.map((l) => l.importance)).toEqual([5, 3, 3]);
+  });
+
   it("strips code fences before parsing", () => {
     const fenced = '```json\n[{"kind":"gotcha","title":"t","body":"b"}]\n```';
     const out = parseExtraction(fenced);

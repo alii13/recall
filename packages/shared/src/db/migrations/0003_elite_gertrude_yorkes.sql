@@ -1,0 +1,1 @@
+ALTER TABLE "learnings" ADD COLUMN "importance" integer DEFAULT 3 NOT NULL;

@@ -34,6 +34,8 @@ async function main(): Promise<void> {
           id: learnings.id,
           kind: learnings.kind,
           project: learnings.project,
+          status: learnings.status,
+          importance: learnings.importance,
           title: learnings.title,
           body: learnings.body,
           why: learnings.why,
@@ -43,13 +45,9 @@ async function main(): Promise<void> {
           createdAt: learnings.createdAt,
         })
         .from(learnings)
-        .where(
-          project
-            ? and(eq(learnings.status, "pending"), eq(learnings.project, project))
-            : eq(learnings.status, "pending"),
-        )
+        .where(project ? eq(learnings.project, project) : undefined)
         .orderBy(desc(learnings.createdAt));
-      console.log(JSON.stringify({ pending: rows.length, rows }, null, 2));
+      console.log(JSON.stringify({ count: rows.length, rows }, null, 2));
     } else if (cmd === "keep") {
       if (rest.length === 0) return usage();
       const res = await db

@@ -13,6 +13,9 @@ const MIN_CHARS = 1500;
 // Cosine similarity at or above this counts as a duplicate - both within one
 // batch and against learnings already stored.
 const DEDUP_THRESHOLD = Number(process.env.RECALL_DEDUP_THRESHOLD ?? 0.9);
+// No human reviews captures, so the model's importance score (1-5) is the
+// quality gate: only learnings rated this high or above are kept.
+const KEEP_THRESHOLD = Number(process.env.RECALL_KEEP_THRESHOLD ?? 4);
 
 async function main(): Promise<void> {
   const started = Date.now();
@@ -60,8 +63,21 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Importance gate first, so we don't waste embed calls on low-value rows.
+    const important = candidates.filter((c) => c.importance >= KEEP_THRESHOLD);
+    if (important.length === 0) {
+      logEvent({
+        status: "empty",
+        sessionId,
+        project,
+        reason: "below_importance",
+        candidates: candidates.length,
+      });
+      return;
+    }
+
     const embedded: { candidate: LearningInput; embedding: number[] }[] = [];
-    for (const candidate of candidates) {
+    for (const candidate of important) {
       const embedding = await embedPassage(apiKey, `${candidate.title}\n\n${candidate.body}`);
       embedded.push({ candidate, embedding });
     }
@@ -94,6 +110,8 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Auto-kept: there is no human review step, so these are immediately
+    // recallable. status='kept' is what search_learnings filters on.
     const rows: NewLearning[] = fresh.map(({ candidate, embedding }) => ({
       kind: candidate.kind,
       project,
@@ -102,7 +120,9 @@ async function main(): Promise<void> {
       why: candidate.why,
       howToApply: candidate.howToApply,
       tags: candidate.tags,
+      importance: candidate.importance,
       embedding,
+      status: "kept",
       sessionId,
     }));
     await db.insert(learnings).values(rows);
@@ -111,7 +131,8 @@ async function main(): Promise<void> {
       sessionId,
       project,
       inserted: rows.length,
-      deduped: candidates.length - rows.length,
+      droppedLowImportance: candidates.length - important.length,
+      deduped: important.length - fresh.length,
       durationMs: Date.now() - started,
     });
   } catch (e) {
