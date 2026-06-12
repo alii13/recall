@@ -1,0 +1,22 @@
+{
+  "name": "@recall/capture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/hook.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@recall/shared": "workspace:*",
+    "drizzle-orm": "^0.36.4",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

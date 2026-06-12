@@ -69,6 +69,7 @@ flowchart TB
 - `@recall/shared` - Drizzle schema, URL utilities (normalize / hash / route), env loader, DB client
 - `@recall/api` - Hono HTTP server with `/save`, custom extractors for Reddit / YouTube / Twitter, Jina-based generic extractor with OG fallback, the summarize-embed-orchestrate pipeline
 - `@recall/mcp` - MCP stdio server with three tools: `search_saved`, `recent_saves`, `get_card`
+- `@recall/capture` - a Claude Code `SessionEnd` hook that captures durable learnings from a session transcript into a separate `learnings` table (see [Capture session learnings](#capture-session-learnings))
 
 ## Setup
 
@@ -102,7 +103,7 @@ export DATABASE_URL='postgresql://user:pass@host/db?sslmode=require'
 pnpm --filter @recall/shared db:migrate
 ```
 
-This creates one `cards` table with an HNSW index on `embedding` and btree indexes on `created_at` and `source_type`.
+This creates the `cards` table (your saved-URL corpus) with an HNSW index on `embedding` and btree indexes on `created_at` and `source_type`, plus the `learnings` table used by [session capture](#capture-session-learnings). Both carry their own HNSW cosine index; they are never queried together.
 
 ### Environment
 
@@ -180,6 +181,44 @@ Start a fresh `claude` session anywhere. Ask "did I save anything about retrieva
 If natural-language queries route to your built-in auto-memory instead of the recall corpus, add this line to your global `~/.claude/CLAUDE.md`:
 
 > When I mention saved content, prior reading, bookmarks, or ask "did I save anything about X" / "do I have anything on Y" / "what have I been reading", call the `recall` MCP server's `search_saved` first. Only fall back to auto-memory if recall returns nothing relevant.
+
+### Capture session learnings
+
+The save pipeline accumulates what you *read*. This does the same for what you *decide*. `@recall/capture` is a Claude Code `SessionEnd` hook: when a session ends it reads the transcript, asks the same NIM Qwen model to pull out durable decisions, corrections, and gotchas, embeds each, and writes them to the `learnings` table. Surfacing them back into future sessions (an MCP tool or a `SessionStart` hook over `learnings`) is the natural next step - capture comes first because the data has to exist before it can be recalled.
+
+It is deliberately walled off from your saved URLs. The three MCP tools only ever read `cards`, so a captured learning can never surface as if it were something you saved. Only the human-readable dialogue is sent to NIM - tool output, where leaked secrets tend to live, is dropped before extraction.
+
+Build first, then add the hook to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node /absolute/path/to/recall/packages/capture/dist/hook.js",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`SessionEnd` hooks have a ~1.5s budget and cannot block, so the hook only launches a detached background worker and exits immediately; the worker does the slow NIM + embed + insert with no timeout pressure. It is best-effort by design - if the worker is killed before it finishes, that session's learnings are lost.
+
+Every run appends one JSON line to `~/.recall/capture.log` (override with `RECALL_CAPTURE_LOG`). That is how you tell it is working, or failing:
+
+```bash
+tail -f ~/.recall/capture.log
+# {"ts":"...","status":"launch","sessionId":"...","pid":12345}
+# {"ts":"...","status":"ok","sessionId":"...","project":"recall","inserted":7,"durationMs":61079}
+```
+
+A `launch` line with no matching `ok` / `empty` / `error` for the same `sessionId` means the worker died silently. Grep `"status":"error"` to see failures and their messages.
 
 ### Capture Shortcuts
 

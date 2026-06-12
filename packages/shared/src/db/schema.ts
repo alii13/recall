@@ -39,3 +39,32 @@ export const cards = pgTable(
 
 export type Card = typeof cards.$inferSelect;
 export type NewCard = typeof cards.$inferInsert;
+
+export const learnings = pgTable(
+  "learnings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    kind: text("kind").notNull(),
+    project: text("project"),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    why: text("why"),
+    howToApply: text("how_to_apply"),
+    tags: text("tags").array().notNull().default([]),
+    embedding: vector("embedding", { dimensions: 1024 }),
+    origin: text("origin").notNull().default("session-capture"),
+    sessionId: text("session_id"),
+    supersededBy: uuid("superseded_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSurfacedAt: timestamp("last_surfaced_at", { withTimezone: true }),
+    surfaceCount: integer("surface_count").notNull().default(0),
+  },
+  (t) => [
+    index("learnings_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+    index("learnings_project_idx").on(t.project),
+    index("learnings_created_at_idx").on(t.createdAt.desc()),
+  ],
+);
+
+export type Learning = typeof learnings.$inferSelect;
+export type NewLearning = typeof learnings.$inferInsert;
