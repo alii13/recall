@@ -59,6 +59,7 @@ export const learnings = pgTable(
     lastSurfacedAt: timestamp("last_surfaced_at", { withTimezone: true }),
     surfaceCount: integer("surface_count").notNull().default(0),
     status: text("status").notNull().default("pending"),
+    importance: integer("importance").notNull().default(3),
   },
   (t) => [
     index("learnings_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
