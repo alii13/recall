@@ -327,6 +327,21 @@ After import:
 2. **Get Clipboard** action (no parameters).
 3. **Get Contents of URL** action, configured exactly like the Share Sheet version, except the `url` field's JSON body value is the **Clipboard** magic variable from step 2.
 
+#### 3. Recall - mac with tab text (the X / Reddit fix)
+
+Server-side fetch can't see content that needs a logged-in session - X and Reddit fall back to URL-only. But when you save on a Mac, the page is already rendered in your authenticated browser tab. `scripts/recall-capture.sh` reads that tab's text and sends it as the `text` field on `/save`, which the pipeline uses directly instead of fetching. So a tweet (including the author's full self-thread, not other people's replies) or a Reddit post comes through with real content.
+
+Setup:
+
+1. One-time per browser, allow AppleScript to read page text:
+   - Chrome: **View → Developer → Allow JavaScript from Apple Events**
+   - Safari: **Develop → Allow JavaScript from Apple Events**
+   Run `scripts/recall-capture.sh --check` to confirm it's on.
+2. Set `RECALL_HOST` (your deployed host) in `.env` alongside `SAVE_TOKEN`.
+3. Point the `Recall - mac` Shortcut at the script: replace its **Get Clipboard** + **Get Contents of URL** actions with a single **Run Shell Script** action running `bash /absolute/path/to/recall/scripts/recall-capture.sh`. (First run prompts once to let Shortcuts control your browser.)
+
+The script reads the clipboard URL, and only attaches tab text when a browser's **active tab matches that URL** - so saving a link copied from Slack or Notion still works and just sends the URL. When a tab matches but the setting is off, it saves URL-only and shows a notification, so the downgrade is never silent. Sources are pulled from their content container (the tweet, the post) rather than the whole page, so navigation chrome doesn't drown the text.
+
 ## MCP tools
 
 Available in any Claude Code session after wiring:
@@ -338,8 +353,8 @@ Available in any Claude Code session after wiring:
 
 ## Limitations
 
-- **Twitter / X is severely degraded.** X blocks oEmbed, Jina, and direct HTML scraping for logged-out clients. recall falls back to saving URL + username only. Adding a `note` when you save a tweet makes the summary useful.
-- **Reddit's `.json` endpoint is anti-bot-gated.** recall falls through to Jina, which works but takes ~10 s for a single thread.
+- **Twitter / X is severely degraded for server-side fetch.** X blocks oEmbed, Jina, and direct HTML scraping for logged-out clients, so a bare URL save falls back to URL + username only. Saving on a Mac with [tab-text capture](#3-recall---mac-with-tab-text-the-x--reddit-fix) recovers the real tweet (and self-thread).
+- **Reddit's `.json` endpoint is anti-bot-gated.** recall falls through to Jina, which works but takes ~10 s for a single thread. Mac [tab-text capture](#3-recall---mac-with-tab-text-the-x--reddit-fix) avoids the fetch entirely for browser saves.
 - **Neon free tier auto-suspends after 5 minutes idle.** First query after suspend takes ~1 s. Other Postgres hosts don't have this.
 - **No images, PDFs, OCR, or video frames.** Text content only.
 - **Single-user by design.** No auth model beyond one shared secret. No multi-tenancy.

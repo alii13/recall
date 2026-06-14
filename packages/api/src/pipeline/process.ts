@@ -1,4 +1,4 @@
-import { type Database, cards } from "@recall/shared";
+import { type Database, cards, providedContent, routeUrl } from "@recall/shared";
 import { eq } from "drizzle-orm";
 import { extract } from "../extractors/index.js";
 import { embed } from "./embed.js";
@@ -10,24 +10,38 @@ export type ProcessOpts = {
   jinaApiKey?: string;
 };
 
-export async function processCard(cardId: string, opts: ProcessOpts): Promise<void> {
+export type ProcessInput = {
+  providedText?: string;
+};
+
+export async function processCard(
+  cardId: string,
+  opts: ProcessOpts,
+  input: ProcessInput = {},
+): Promise<void> {
   const { db, nvidiaApiKey, jinaApiKey } = opts;
   const rows = await db.select().from(cards).where(eq(cards.id, cardId)).limit(1);
   const card = rows[0];
   if (!card) return;
 
+  const provided = input.providedText?.trim();
+
   let extracted;
-  try {
-    extracted = await extract(card.url, { jinaApiKey });
-  } catch (e) {
-    await db
-      .update(cards)
-      .set({
-        extractionStatus: "failed",
-        errorMessage: `extract: ${(e as Error).message}`,
-      })
-      .where(eq(cards.id, cardId));
-    return;
+  if (provided) {
+    extracted = { ...providedContent(provided), sourceType: routeUrl(card.url) };
+  } else {
+    try {
+      extracted = await extract(card.url, { jinaApiKey });
+    } catch (e) {
+      await db
+        .update(cards)
+        .set({
+          extractionStatus: "failed",
+          errorMessage: `extract: ${(e as Error).message}`,
+        })
+        .where(eq(cards.id, cardId));
+      return;
+    }
   }
 
   const baseUpdate = {
