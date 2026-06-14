@@ -7,6 +7,7 @@ import { processCard } from "../pipeline/process.js";
 const bodySchema = z.object({
   url: z.string().min(1),
   note: z.string().optional(),
+  text: z.string().optional(),
 });
 
 export type SaveCtx = {
@@ -54,8 +55,9 @@ export function makeSaveHandler(ctx: SaveCtx) {
       return c.json({ error: "insert_failed" }, 500);
     }
 
+    const providedText = parsed.data.text;
     setImmediate(() => {
-      processCard(inserted.id, ctx).catch((e) => {
+      processCard(inserted.id, ctx, { providedText }).catch((e) => {
         console.error(`[processCard ${inserted.id}] ${(e as Error).message}`);
       });
     });
