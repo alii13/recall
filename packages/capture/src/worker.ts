@@ -5,6 +5,7 @@ import { dedupeWithinBatch } from "./dedup.js";
 import { type LearningInput, buildExtractionPrompt, parseExtraction } from "./extract.js";
 import { logEvent } from "./log.js";
 import { embedPassage, extractLearnings } from "./nim.js";
+import { nextSlice, readOffset, writeOffset } from "./offsets.js";
 import { parseTranscript, projectFromCwd } from "./transcript.js";
 
 const ENV_FILE = process.env.RECALL_ENV_FILE ?? "/Users/shekh/recall/.env";
@@ -46,7 +47,13 @@ async function main(): Promise<void> {
     return;
   }
 
-  const turns = parseTranscript(jsonl);
+  // Process only the transcript tail not yet seen for this session. A long
+  // session fires PreCompact on every compaction; without this each fire would
+  // re-extract the whole transcript. The offset advances only once a slice has
+  // actually been run through extraction below, so a sub-gate tail accumulates
+  // into the next run rather than being dropped.
+  const { slice, totalLines } = nextSlice(jsonl, readOffset(sessionId));
+  const turns = parseTranscript(slice);
   const totalChars = turns.reduce((n, t) => n + t.text.length, 0);
   if (turns.length < MIN_TURNS || totalChars < MIN_CHARS) {
     logEvent({ status: "skipped", sessionId, reason: "below_gate", turns: turns.length });
@@ -59,6 +66,8 @@ async function main(): Promise<void> {
     const raw = await extractLearnings(apiKey, buildExtractionPrompt(turns));
     const candidates = parseExtraction(raw);
     if (candidates.length === 0) {
+      // Extraction ran and found nothing - this slice is done.
+      writeOffset(sessionId, totalLines);
       logEvent({ status: "empty", sessionId, project, turns: turns.length });
       return;
     }
@@ -66,6 +75,7 @@ async function main(): Promise<void> {
     // Importance gate first, so we don't waste embed calls on low-value rows.
     const important = candidates.filter((c) => c.importance >= KEEP_THRESHOLD);
     if (important.length === 0) {
+      writeOffset(sessionId, totalLines);
       logEvent({
         status: "empty",
         sessionId,
@@ -100,6 +110,7 @@ async function main(): Promise<void> {
     }
 
     if (fresh.length === 0) {
+      writeOffset(sessionId, totalLines);
       logEvent({
         status: "empty",
         sessionId,
@@ -126,6 +137,7 @@ async function main(): Promise<void> {
       sessionId,
     }));
     await db.insert(learnings).values(rows);
+    writeOffset(sessionId, totalLines);
     logEvent({
       status: "ok",
       sessionId,

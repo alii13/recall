@@ -69,7 +69,7 @@ flowchart TB
 - `@recall/shared` - Drizzle schema, URL utilities (normalize / hash / route), env loader, DB client
 - `@recall/api` - Hono HTTP server with `/save`, custom extractors for Reddit / YouTube / Twitter, Jina-based generic extractor with OG fallback, the summarize-embed-orchestrate pipeline
 - `@recall/mcp` - MCP stdio server: `search_saved`, `recent_saves`, `get_card`, and `search_learnings` (recall over kept session learnings)
-- `@recall/capture` - a Claude Code `SessionEnd` hook that captures durable learnings from a session transcript into a separate `learnings` table (see [Capture session learnings](#capture-session-learnings))
+- `@recall/capture` - a Claude Code `SessionEnd` + `PreCompact` hook that captures durable learnings from a session transcript into a separate `learnings` table (see [Capture session learnings](#capture-session-learnings))
 
 ## Setup
 
@@ -184,7 +184,7 @@ If natural-language queries route to your built-in auto-memory instead of the re
 
 ### Capture session learnings
 
-The save pipeline accumulates what you *read*. This does the same for what you *decide*. `@recall/capture` is a Claude Code `SessionEnd` hook: when a session ends it reads the transcript, asks the same NIM Qwen model to pull out durable decisions, corrections, and gotchas and score each for importance (1-5), embeds them, deduplicates against both the current batch and what is already stored, and **auto-keeps the ones rated `≥ 4`** (the `RECALL_KEEP_THRESHOLD`). There is no human review step - because nothing human reads this store, the importance score plus dedup are the quality gate. Kept learnings surface back into any session through the `search_learnings` MCP tool (see [MCP tools](#mcp-tools)), closing the loop: capture at session end → auto-keep the high-signal ones → recall on demand.
+The save pipeline accumulates what you *read*. This does the same for what you *decide*. `@recall/capture` is a Claude Code hook that runs on both `SessionEnd` and `PreCompact`: when a session ends - or just before its context is compacted - it reads the transcript, asks the same NIM Qwen model to pull out durable decisions, corrections, and gotchas and score each for importance (1-5), embeds them, deduplicates against both the current batch and what is already stored, and **auto-keeps the ones rated `≥ 4`** (the `RECALL_KEEP_THRESHOLD`). There is no human review step - because nothing human reads this store, the importance score plus dedup are the quality gate. Kept learnings surface back into any session through the `search_learnings` MCP tool (see [MCP tools](#mcp-tools)), closing the loop: capture at session end → auto-keep the high-signal ones → recall on demand.
 
 It is deliberately walled off from your saved URLs. The three MCP tools only ever read `cards`, so a captured learning can never surface as if it were something you saved. Only the human-readable dialogue is sent to NIM - tool output, where leaked secrets tend to live, is dropped before extraction.
 
@@ -203,12 +203,25 @@ Build first, then add the hook to `~/.claude/settings.json`:
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node /absolute/path/to/recall/packages/capture/dist/hook.js",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
 ```
 
-`SessionEnd` hooks have a ~1.5s budget and cannot block, so the hook only launches a detached background worker and exits immediately; the worker does the slow NIM + embed + insert with no timeout pressure. It is best-effort by design - if the worker is killed before it finishes, that session's learnings are lost.
+`SessionEnd` and `PreCompact` hooks both have a tight budget and cannot block, so the hook only launches a detached background worker and exits immediately; the worker does the slow NIM + embed + insert with no timeout pressure. Capturing on `PreCompact` matters because compaction replaces older turns with a summary - running just before it preserves decisions that would otherwise be summarised away. It is best-effort by design - if the worker is killed before it finishes, those learnings are lost.
+
+Capture is incremental per session. The worker tracks how many transcript lines it has already extracted from (in `~/.recall/offsets/<session-id>`, override the directory with `RECALL_OFFSET_DIR`) and processes only the new tail on the next run, so a long session that fires `PreCompact` on every compaction does not re-extract the whole transcript each time. The offset advances only once a slice has actually run through extraction, so a tail too small to clear the size gate accumulates into the next run instead of being dropped; on a transient NIM or DB failure the offset stays put and the slice is retried. The transcript JSONL is append-only (compaction summarises the model's context window, not the on-disk file), which is what makes a line offset safe. The cross-run dedup against stored rows remains the backstop if an offset is ever lost.
 
 Every run appends one JSON line to `~/.recall/capture.log` (override with `RECALL_CAPTURE_LOG`). That is how you tell it is working, or failing:
 
