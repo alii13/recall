@@ -340,7 +340,7 @@ Setup:
 2. Set `RECALL_HOST` (your deployed host) in `.env` alongside `SAVE_TOKEN`.
 3. Point the `Recall - mac` Shortcut at the script: replace its **Get Clipboard** + **Get Contents of URL** actions with a single **Run Shell Script** action running `bash /absolute/path/to/recall/scripts/recall-capture.sh`. (First run prompts once to let Shortcuts control your browser.)
 
-The script reads the clipboard URL, and only attaches tab text when a browser's **active tab matches that URL** - so saving a link copied from Slack or Notion still works and just sends the URL. When a tab matches but the setting is off, it saves URL-only and shows a notification, so the downgrade is never silent. Sources are pulled from their content container (the tweet, the post) rather than the whole page, so navigation chrome doesn't drown the text.
+Tab text is attached **only for X and Reddit** - the sources where server-side fetch hits a login wall. Every other URL (YouTube, articles, GitHub, anything copied from Slack or Notion) is sent URL-only exactly as before, so the server's own extractors run unchanged - that matters because they beat raw page text (YouTube's transcript isn't in the visible page; Jina gives cleaner article markdown than page chrome). Even for X and Reddit, text is only grabbed when a browser's **active tab matches the clipboard URL**; otherwise it falls back to URL-only. Content is pulled from the tweet/post container, not the whole page. When a tab matches but the setting is off, it saves URL-only and shows a notification, so the downgrade is never silent.
 
 ## MCP tools
 

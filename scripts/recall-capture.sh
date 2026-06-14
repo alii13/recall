@@ -27,11 +27,13 @@ read_env() { # key
   grep -E "^$1=" "$ENV_FILE" | head -1 | cut -d= -f2-
 }
 
-# Injected into the tab. Prefers the tweet/post container over the whole page
-# so navigation chrome does not drown the actual content. Also doubles as the
-# probe for --check (any trivial JS triggers the same on/off behavior).
+# Injected into the tab. Only X and Reddit get tab text - those are the
+# sources where server-side fetch hits a login wall. Every other host returns
+# "" so the server's own extractors run unchanged (YouTube transcript, Jina
+# readability for articles, etc.), which beat raw page text. Content is pulled
+# from the tweet/post container, not the whole page, to avoid nav chrome.
 read -r -d '' GRAB_JS <<'JS' || true
-(function(){var h=location.hostname.replace(/^www\./,'');function pick(s){for(var i=0;i<s.length;i++){var e=document.querySelector(s[i]);if(e&&e.innerText&&e.innerText.trim().length>40)return e.innerText;}return null;}var t=null;if(/(^|\.)(x|twitter)\.com$/.test(h)){var arts=document.querySelectorAll('article[data-testid="tweet"]');if(arts.length){var handleOf=function(a){var u=a.querySelector('[data-testid="User-Name"]');var m=((u?u.innerText:a.innerText).match(/@[A-Za-z0-9_]+/));return m?m[0]:null;};var main=handleOf(arts[0]);var p=[];for(var i=0;i<arts.length;i++){if(i===0||handleOf(arts[i])===main)p.push(arts[i].innerText);}t=p.join('\n\n');}}else if(/(^|\.)reddit\.com$/.test(h)){t=pick(['shreddit-post','[data-test-id="post-content"]','article']);}if(!t){t=pick(['article','main','[role="main"]'])||document.body.innerText;}return (t||'').slice(0,20000);})()
+(function(){var h=location.hostname.replace(/^www\./,'');function pick(s){for(var i=0;i<s.length;i++){var e=document.querySelector(s[i]);if(e&&e.innerText&&e.innerText.trim().length>40)return e.innerText;}return null;}var t=null;if(/(^|\.)(x|twitter)\.com$/.test(h)){var arts=document.querySelectorAll('article[data-testid="tweet"]');if(arts.length){var handleOf=function(a){var u=a.querySelector('[data-testid="User-Name"]');var m=((u?u.innerText:a.innerText).match(/@[A-Za-z0-9_]+/));return m?m[0]:null;};var main=handleOf(arts[0]);var p=[];for(var i=0;i<arts.length;i++){if(i===0||handleOf(arts[i])===main)p.push(arts[i].innerText);}t=p.join('\n\n');}}else if(/(^|\.)reddit\.com$/.test(h)){t=pick(['shreddit-post','[data-test-id="post-content"]','article']);}return (t||'').slice(0,20000);})()
 JS
 
 # AppleScript shared helpers (URL normalization for loose matching).
@@ -179,16 +181,26 @@ norm() {
 }
 TARGET="$(norm "$URL")"
 
+# Only X and Reddit benefit from tab text; every other host goes straight to
+# the server's own extractors (URL-only), so the browser is never touched.
+HOSTONLY="$(printf '%s' "$URL" | sed -E 's#^https?://##; s#[/:?#].*$##; s#^www\.##' | tr '[:upper:]' '[:lower:]')"
+case "$HOSTONLY" in
+  x.com | twitter.com | mobile.twitter.com | reddit.com | old.reddit.com | np.reddit.com) NEEDS_TEXT=1 ;;
+  *) NEEDS_TEXT=0 ;;
+esac
+
 TEXT=""
 JS_OFF=0
-for grab in grab_chrome grab_safari; do
-  res="$($grab "$TARGET" "$GRAB_JS")"
-  status="${res%%$'\n'*}"
-  case "$status" in
-    OK)    TEXT="${res#OK$'\n'}"; break ;;
-    JSOFF) JS_OFF=1 ;;  # a tab matched but the setting is off; keep checking the other browser
-  esac
-done
+if [ "$NEEDS_TEXT" = 1 ]; then
+  for grab in grab_chrome grab_safari; do
+    res="$($grab "$TARGET" "$GRAB_JS")"
+    status="${res%%$'\n'*}"
+    case "$status" in
+      OK)    TEXT="${res#OK$'\n'}"; break ;;
+      JSOFF) JS_OFF=1 ;;  # a tab matched but the setting is off; keep checking the other browser
+    esac
+  done
+fi
 
 # Build the body with jq so text is escaped correctly. text is omitted when
 # empty, so the server falls back to its normal server-side fetch.
