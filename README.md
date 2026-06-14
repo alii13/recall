@@ -152,7 +152,9 @@ You need an always-on host with HTTPS so the iOS Shortcut can hit it. Any will d
 2. Copy `packages/api/dist` + `packages/shared/dist` + `node_modules` to the host (or run `pnpm install --prod` there)
 3. Put env vars in `/etc/recall-api.env` (chmod 600, root-owned)
 4. Run as a `systemd` unit pointing at `node packages/api/dist/index.js`
-5. Reverse-proxy via nginx with a Let's Encrypt cert for your subdomain
+5. Reverse-proxy via nginx with a Let's Encrypt cert for your subdomain (or a Cloudflare Tunnel via `cloudflared`)
+
+**Redeploying after a change:** if the host is a git checkout of this repo (with a read-only deploy key and pnpm via nvm), run `scripts/deploy.sh` on the host - it pulls `main`, installs, rebuilds `dist`, and restarts `recall-api`.
 
 ### Wire the MCP server into Claude Code
 
