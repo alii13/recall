@@ -17,6 +17,10 @@ const DEDUP_THRESHOLD = Number(process.env.RECALL_DEDUP_THRESHOLD ?? 0.9);
 // No human reviews captures, so the model's importance score (1-5) is the
 // quality gate: only learnings rated this high or above are kept.
 const KEEP_THRESHOLD = Number(process.env.RECALL_KEEP_THRESHOLD ?? 4);
+// A fixed key every capture worker shares, so the dedup-check + insert below
+// runs under one Postgres advisory lock and concurrent workers cannot both
+// insert the same learning. The exact value is arbitrary; it only has to match.
+const CAPTURE_LOCK_KEY = 461_982_017;
 
 async function main(): Promise<void> {
   const started = Date.now();
@@ -92,24 +96,53 @@ async function main(): Promise<void> {
       embedded.push({ candidate, embedding });
     }
 
-    // Drop near-duplicates within this batch, then anything close to a row that
-    // already exists. Keeps the same learning from piling up across sessions.
+    // Drop near-duplicates within this batch first - pure, no DB needed.
     const unique = dedupeWithinBatch(embedded, DEDUP_THRESHOLD);
-    const fresh: typeof unique = [];
-    for (const item of unique) {
-      const vec = `[${item.embedding.join(",")}]`;
-      const distance = sql<number>`${learnings.embedding} <=> ${vec}::vector`;
-      const [near] = await db
-        .select({ distance })
-        .from(learnings)
-        .where(isNotNull(learnings.embedding))
-        .orderBy(distance)
-        .limit(1);
-      const similarity = near ? 1 - Number(near.distance) : 0;
-      if (similarity < DEDUP_THRESHOLD) fresh.push(item);
-    }
 
-    if (fresh.length === 0) {
+    // Serialise the cross-run dedup check and the insert behind a transaction
+    // advisory lock. Without it, two workers running at once (e.g. a PreCompact
+    // and the SessionEnd right after) could both query the nearest stored row,
+    // both miss the other's not-yet-committed insert, and both store the same
+    // learning. Under the lock the second worker waits for the first to commit,
+    // then its dedup query sees the new rows. The lock is transaction-scoped, so
+    // a crashed worker releases it on disconnect; captures are rare and the
+    // section is tiny, so serialising globally costs nothing.
+    const rows = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${CAPTURE_LOCK_KEY}::bigint)`);
+      const fresh: typeof unique = [];
+      for (const item of unique) {
+        const vec = `[${item.embedding.join(",")}]`;
+        const distance = sql<number>`${learnings.embedding} <=> ${vec}::vector`;
+        const [near] = await tx
+          .select({ distance })
+          .from(learnings)
+          .where(isNotNull(learnings.embedding))
+          .orderBy(distance)
+          .limit(1);
+        const similarity = near ? 1 - Number(near.distance) : 0;
+        if (similarity < DEDUP_THRESHOLD) fresh.push(item);
+      }
+      if (fresh.length === 0) return [] as NewLearning[];
+      // Auto-kept: there is no human review step, so these are immediately
+      // recallable. status='kept' is what search_learnings filters on.
+      const newRows: NewLearning[] = fresh.map(({ candidate, embedding }) => ({
+        kind: candidate.kind,
+        project,
+        title: candidate.title,
+        body: candidate.body,
+        why: candidate.why,
+        howToApply: candidate.howToApply,
+        tags: candidate.tags,
+        importance: candidate.importance,
+        embedding,
+        status: "kept",
+        sessionId,
+      }));
+      await tx.insert(learnings).values(newRows);
+      return newRows;
+    });
+
+    if (rows.length === 0) {
       writeOffset(sessionId, totalLines);
       logEvent({
         status: "empty",
@@ -121,22 +154,6 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Auto-kept: there is no human review step, so these are immediately
-    // recallable. status='kept' is what search_learnings filters on.
-    const rows: NewLearning[] = fresh.map(({ candidate, embedding }) => ({
-      kind: candidate.kind,
-      project,
-      title: candidate.title,
-      body: candidate.body,
-      why: candidate.why,
-      howToApply: candidate.howToApply,
-      tags: candidate.tags,
-      importance: candidate.importance,
-      embedding,
-      status: "kept",
-      sessionId,
-    }));
-    await db.insert(learnings).values(rows);
     writeOffset(sessionId, totalLines);
     logEvent({
       status: "ok",
@@ -144,7 +161,7 @@ async function main(): Promise<void> {
       project,
       inserted: rows.length,
       droppedLowImportance: candidates.length - important.length,
-      deduped: important.length - fresh.length,
+      deduped: important.length - rows.length,
       durationMs: Date.now() - started,
     });
   } catch (e) {
